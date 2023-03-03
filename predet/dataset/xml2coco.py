@@ -29,7 +29,7 @@ class Xml2Coco(object):
 
     Args:
         xml_dir: [str], xml文件所在路径(支持递归搜索)
-        out_path: [str], lmdb格式数据保存路径
+        out_path: [str], COCO格式数据保存路径
         cls_txt: [str or list], 类别名列表或记录类别名的文本，不在cls_txt中的类别会被忽略
     '''
 
