@@ -225,5 +225,3 @@ events.out.tfevents*
 # images
 *.jpg
 
-# demo
-demo/

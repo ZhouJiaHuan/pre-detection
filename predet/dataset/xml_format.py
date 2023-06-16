@@ -1,14 +1,8 @@
-# coding: utf-8
-# Description: xml文件基类（只实现一些最基本的功能）
-# Author: ZhouJH
-# Date: 2019/10/24
-
 import xml.etree.ElementTree as ET
-import os
-import numpy as np
+from pathlib import Path
 from collections import Counter
+from typing import List, Tuple, Dict, Set
 
-from ..utils.file_io import get_file_path
 
 def indent(elem, level=0):
     i = "\n" + level*"  "
@@ -24,57 +18,57 @@ def indent(elem, level=0):
     return elem
 
 class XmlFormat(object):
-    '''分析指定文件夹下的xml信息
+    '''xml annotations analysis with specified xml directory
     '''
 
     @staticmethod
-    def get_xml_list(xml_dir):
-        return get_file_path(xml_dir, filter=['.xml'])
+    def get_xml_list(xml_dir: str, sort=False) -> List[str]:
+        ''' get a list of xml absolute path in specified xml directory
+        '''
+        xml_list =list(Path(xml_dir).glob('*.xml'))
+        xml_list = [str(p.absolute()) for p in xml_list]
+        return sorted(xml_list) if sort else xml_list
 
     @staticmethod
-    def get_obj_num(xml_path):
-        '''获取xml文件中目标数量
+    def get_obj_num(xml_path: str) -> int:
+        '''get object number from xml annotation
         '''
-        assert os.path.exists(xml_path), "{0} does not exist!".format(xml_path)
+        assert Path(xml_path).exists(), f"{xml_path} not exist!"
         return len(ET.parse(xml_path).getroot().findall('object'))
 
     @staticmethod
-    def get_obj_names(xml_path):
-        '''从xml文件中解析出包含目标的类名
-
-        Args:
-            xml_path: [str], xml文件路径
-        
-        Return:
-            obj_names: [set], 类名集合
+    def get_obj_names(xml_path: str) -> Set:
+        '''get a set of object names from xml annotation
         '''
-        assert os.path.exists(xml_path), "{0} does not exist!".format(xml_path)
+        assert Path(xml_path).exists(), f"{xml_path} not exist!"
         root=ET.parse(xml_path).getroot()
         obj_names = set([obj.find('name').text for obj in root.findall('object')])
         return obj_names
     
     @staticmethod
-    def get_main_obj(xml_path, default='background'):
-        '''获取xml文件中包含的主要目标（数量最多）
+    def get_main_obj(xml_path: str) -> List:
+        '''get main object from xml annotation
 
-        若不包含任何目标，返回default
+        Return:
+            [obj_name, obj_num] or [] if no object found
         '''
-        assert os.path.exists(xml_path), "{0} does not exist!".format(xml_path)
+        assert Path(xml_path).exists(), f"{xml_path} not exist!"
         root=ET.parse(xml_path).getroot()
         obj_names = [obj.find('name').text for obj in root.findall('object')]
         if len(obj_names) > 0:
-            return Counter(obj_names).most_common(1)[0][0]
+            return Counter(obj_names).most_common(1)[0]
         else:
-            return default
+            return []
 
     @staticmethod
-    def get_img_info(xml_path):
-        '''获取xml对应图像的基本信息
+    def get_img_info(xml_path: str) -> List:
+        '''get image info from xml annotation
     
-        返回形式：[img_name, img_width, img_height, img_depth]
+        Return:
+            [img_name, img_width, img_height, img_depth]
         '''
 
-        assert os.path.exists(xml_path), "{0} does not exist!".format(xml_path)
+        assert Path(xml_path).exists(), f"{xml_path} not exist!"
 
         tree=ET.parse(xml_path)
         root=tree.getroot()
@@ -86,21 +80,17 @@ class XmlFormat(object):
         return img_info     
 
     @staticmethod
-    def parse_xml_info(xml_path):
-        ''' 解析xml文件信息
-        
-        解析出的xml信息包含2类：
-        第一类是图像信息：图像名图像宽高,通道数
-        第二类是包含的目标信息：目标类别和每类目标所有bbx的位置
-
-        Args:
-            xml_path:xml文件路径
+    def parse_xml_info(xml_path: str) -> Tuple[List, Dict]:
+        ''' parse xml annotation info
 
         Return
             img_info: [list], [img_name, W, H, C]
-            obj_info: [dict], {obj_name1: [[xmin,ymin,xmax,ymax], [xmin,ymin,xmax,ymax], ...], obj_name2: ...}
+            obj_info: [dict], {obj_name1: [[x1, y1, x2, y2], [x1, y1, x2, y2], ...],
+                               obj_name2: [[x1, y1, x2, y2], [x1, y1, x2, y2], ...],
+                               ...
+                               }
         '''
-        assert os.path.exists(xml_path), "{0} does not exist!".format(xml_path)
+        assert Path(xml_path).exists(), f"{xml_path} not exist!"
 
         tree=ET.parse(xml_path)
         root=tree.getroot()
@@ -125,25 +115,31 @@ class XmlFormat(object):
         return img_info, obj_info
     
     @staticmethod
-    def dump_xml(img_info, obj_info, out_path):
-        '''根据图片信息和目标信息写xml到指定路径
+    def dump_xml(img_info: List, obj_info: Dict, out_path: str):
+        '''dump xml annotation with image info and object info
 
         Args:
             img_info: [list], [img_name, W, H, C]
-            obj_info: [dict], {obj_name1: [[xmin,ymin,xmax,ymax], [xmin,ymin,xmax,ymax], ...], obj_name2: ...}      
+            obj_info: [dict], {obj_name1: [[x1, y1, x2, y2], [x1, y1, x2, y2], ...],
+                               obj_name2: [[x1, y1, x2, y2], [x1, y1, x2, y2], ...],
+                               ...
+                               }
+
+        Note: truncation and difficult info are set to 0.    
         '''
-        
-        assert out_path.split('.')[-1] == 'xml'
-        out_dir, xml_name = os.path.split(out_path)
+        p = Path(out_path)
+        assert p.suffix == '.xml', "invalid output xml path!"
+        out_dir, xml_name = p.parent.resolve(), p.name
+
         root = ET.Element('annotation')
         folder = ET.SubElement(root, 'folder')
-        folder.text = out_dir
+        folder.text = str(out_dir)
         filename = ET.SubElement(root, 'filename')
         img_ext = img_info[0].split('.')[-1]
         img_name = xml_name.replace('.xml', '.'+img_ext)
         filename.text = img_name
         path = ET.SubElement(root, 'path')
-        path.text = os.path.join(out_dir, img_name)
+        path.text = str(out_dir.joinpath(img_name))
         size = ET.SubElement(root, 'size')
         width = ET.SubElement(size, 'width')
         height = ET.SubElement(size, 'height')
@@ -177,18 +173,6 @@ class XmlFormat(object):
         tree.write(out_path)
 
     def __init__(self, xml_dir):
-        self._xml_dir = xml_dir
-        self._xml_list = self.get_xml_list(xml_dir)
-        self._xml_num = len(self._xml_list)
-
-    @property
-    def xml_dir(self):
-        return self._xml_dir
-
-    @property
-    def xml_list(self):
-        return self._xml_list
-
-    @property
-    def xml_num(self):
-        return self._xml_num
+        self.xml_dir = xml_dir
+        self.xml_list = self.get_xml_list(xml_dir)
+        self.xml_num = len(self.xml_list)

@@ -1,13 +1,13 @@
-# coding: utf-8
-# Description: xml标注及图片转coco
-# Author: ZhouJH
-# Date: 2019/11/08
-
-import os
 import json
+import logging
 import numpy as np
 from tqdm import tqdm
+from pathlib import Path
+from typing import List, Dict, Union
 from .xml_format import XmlFormat as Xml
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
 
 
 class MyEncoder(json.JSONEncoder):
@@ -23,28 +23,34 @@ class MyEncoder(json.JSONEncoder):
 
 
 class Xml2Coco(object):
-    '''xml换为COCO格式
-
-    xml标注和对应的图片需要放在相同的路径下，图片为jpg格式
-
-    Args:
-        xml_dir: [str], xml文件所在路径(支持递归搜索)
-        out_path: [str], COCO格式数据保存路径
-        cls_txt: [str or list], 类别名列表或记录类别名的文本，不在cls_txt中的类别会被忽略
+    '''xml annotations to coco json annotations
     '''
 
-    def __init__(self, xml_dir, out_path, cls_txt):
+    def __init__(self,
+                 xml_dir: str,
+                 out_path: str,
+                 cls_txt: Union[str, List],
+                 img_ext='.jpg'):
+        '''
+        Args:
+            xml_dir: [str], xml annotation directory
+            out_path: [str], COCO json format save path
+            cls_txt: [str | list], class list or class file
+            img_ext: [str], img format, default '.jpg'
+        '''
         super(Xml2Coco, self).__init__()
-        self.xml = Xml(xml_dir)
+        self.xml_dir = xml_dir
+        assert Path(self.xml_dir).exists(), "xml or image directory not found!"
         self.out_path = out_path
         assert out_path.split('.')[-1] == 'json', \
             "output coco annotations must be in json format!"
         if isinstance(cls_txt, str):
-            assert os.path.exists(cls_txt)
+            assert Path(cls_txt).exists(), f"class file not found: {cls_txt}!"
             self.classes = self._load_classes(cls_txt)
         else:
             assert isinstance(cls_txt, (list, tuple))
             self.classes = cls_txt
+        self.img_ext = img_ext
 
         self.img_list = []
         self.images = []
@@ -56,29 +62,22 @@ class Xml2Coco(object):
         self.height = 0
         self.width = 0
 
-    def _load_classes(self, cls_txt):
-        '''读取数据的类别信息
-
-        类别需要按行写入到一个txt文本中
-
-        Args:
-            cls_txt: 记录类别信息的txt路径
-        Return:
-            记录类别信息的字符串列表
+    def _load_classes(self, cls_txt: str, ignore='#') -> List[str]:
+        ''' load classes info from file
         '''
-        assert os.path.exists(cls_txt)
         with open(cls_txt, 'r') as f:
             return [line.strip() for line in f.readlines()
-                if not line.startswith('#')]
+                if not line.startswith(ignore)]
 
-    def _image(self, img_info, num):
-        '''生成COCO标注的的"images"信息
+    def _image(self, img_info: List, num: int) -> Dict:
+        '''generate 'image' info in coco json format
 
         Args:
             img_info: [list], [img_name, w, h, c]
-            num: 当前图片的标号（从1开始）
+            num: current image idx (start from 1)
+
         Return:
-            image: [dict], 包含height, width, id, file_name
+            image: [dict], dict with height, width, id, file_name
         '''
         image = {}
         width = int(img_info[1])
@@ -86,18 +85,17 @@ class Xml2Coco(object):
         image['height'] = height
         image['width'] = width
         image['id'] = num + 1
-        image['file_name'] = os.path.basename(img_info[0])
+        image['file_name'] = Path(img_info[0]).name
         self.height = height
         self.width = width
         return image
 
-    def _annotation(self, obj, img_name):
-        '''生成COCO标注中的annotation
+    def _annotation(self, obj, img_name) -> Dict:
+        '''generate 'annotation' info in coco json format
 
         Args:
-            obj: [list], [label, bbx]
-                 其中label为str, bbx为[xmin, ymin, w, h]
-            img_name: [str], 当前obj所在的图片名
+            obj: [list], [cls_name, xmin, ymin, w, h]
+            img_name: [str], image name corresponding to current obj
         '''
         annotation = {}
         annotation['segmentation'] = []
@@ -105,38 +103,29 @@ class Xml2Coco(object):
         annotation['image_id'] = self.img_list.index(img_name) + 1
         annotation['bbox'] = obj[1:]
         annotation['area'] = obj[3] * obj[4]
-        annotation['category_id'] = self.classes.index(obj[0])+1
+        annotation['category_id'] = self.classes.index(obj[0]) + 1
         annotation['id'] = self.obj_num
         return annotation
 
-    def _categorie(self):
-        '''生成COCO标注中的categories
+    def _categorie(self) -> List[Dict]:
+        '''generate 'categories' info in coco json format
         '''
         categories = []
         for idx, cls_name in enumerate(self.classes):
             categorie = {}
             categorie['supercategory'] = 'Unspecified'
-            categorie['id'] = idx + 1  # 0 默认为背景
+            categorie['id'] = idx + 1  # 0 = background
             categorie['name'] = cls_name
             categories.append(categorie)
         return categories
 
-    def _data2coco(self):
-        '''将加载的标注按COCO格式存储
-        '''
-        data_coco = {}
-        data_coco['images'] = self.images
-        data_coco['categories'] = self.categories
-        data_coco['annotations'] = self.annotations
-        return data_coco
-
     def _data_transfer(self):
-        '''加载xml标注信息
+        '''load xml annotations info
         '''
-        for num, xml_path in enumerate(tqdm(self.xml.xml_list)):
-            img_name = os.path.basename(xml_path).replace('.xml', '.jpg')
+        for num, xml_path in enumerate(tqdm(Xml.get_xml_list(self.xml_dir))):
+            img_name = Path(xml_path).stem + self.img_ext
             self.img_list.append(img_name)
-            img_info, obj_info = self.xml.parse_xml_info(xml_path)
+            img_info, obj_info = Xml.parse_xml_info(xml_path)
             img_info[0] = img_name # 使用xml对应的文件名
             self.images.append(self._image(img_info, num))
             for label, bbox in obj_info.items():
@@ -149,12 +138,17 @@ class Xml2Coco(object):
                     self.annotations.append(self._annotation(obj, img_name))
 
     def convert(self):
-        '''转化COCO格式标注
+        ''' run convert process
         '''
-        print("loading xml annotations ...")
+        logger.info("loading xml annotations ...")
         self._data_transfer()
-        self.coco = self._data2coco()
-        print("saving coco annotations ...")
+
+        logger.info("saving coco annotations ...")
+        data_coco = {}
+        data_coco['images'] = self.images
+        data_coco['categories'] = self.categories
+        data_coco['annotations'] = self.annotations
         with open(self.out_path, 'w') as f:
-            json.dump(self.coco, f, indent=4, cls=MyEncoder)
-        print("convert finished.")
+            json.dump(data_coco, f, indent=4, cls=MyEncoder)
+
+        logger.info("convert finished.")
