@@ -1,6 +1,7 @@
 import sys
 sys.path.append('.')
 import logging
+import numpy as np
 from PIL import Image
 from pathlib import Path
 from tqdm import tqdm
@@ -11,20 +12,22 @@ logging.basicConfig(level=logging.INFO)
 
 
 class Dota2Xml(object):
-    ''' convert dota txt rect labels to voc xml format
+    ''' convert dota labels to voc xml format
     rect label format:
     x1 y1 x2 y2 x3 y3 x4 y4 class_name difficult
 
-    example (part of P0003.txt in val dataset)
-    ...
-    ...
-    1077.0 949.0 1107.0 949.0 1107.0 987.0 1077.0 987.0 small-vehicle 1
-    1085.0 969.0 1119.0 969.0 1119.0 1012.0 1085.0 1012.0 small-vehicle 0
-    1088.0 706.0 1126.0 706.0 1126.0 757.0 1088.0 757.0 large-vehicle 0
-    1089.0 621.0 1126.0 621.0 1126.0 667.0 1089.0 667.0 small-vehicle 1
-    1038.0 620.0 1071.0 620.0 1071.0 664.0 1038.0 664.0 small-vehicle 0
-    990.0 504.0 1022.0 504.0 1022.0 548.0 990.0 548.0 small-vehicle 1
-    953.0 421.0 978.0 421.0 978.0 463.0 953.0 463.0 small-vehicle 1
+    example (part of P0000.txt in train dataset):
+    imagesource:GoogleEarth
+    gsd:0.146343590398
+    2753 2408 2861 2385 2888 2468 2805 2502 plane 0
+    3445 3391 3484 3409 3478 3422 3437 3402 large-vehicle 0
+    3185 4158 3195 4161 3175 4204 3164 4199 large-vehicle 0
+    2870 4250 2916 4268 2912 4283 2866 4263 large-vehicle 0
+    630 1674 628 1666 640 1654 644 1666 small-vehicle 0
+    636 1713 633 1706 646 1698 650 1706 small-vehicle 0
+    717 76 726 78 722 95 714 90 small-vehicle 0
+    737 82 744 84 739 101 731 98 small-vehicle 0
+    658 242 648 237 657 222 667 225 small-vehicle 1
     ...
     ...
     '''
@@ -55,10 +58,14 @@ class Dota2Xml(object):
             row_list = f.readlines()
         for row in row_list:
             row = row.strip().split(' ')
+            if len(row) != 10:
+                continue
             if (not self.with_difficult) and (int(row[-1]) == 1):
                 continue
             obj_name = row[8]
-            x1, y1, x2, y2 = float(row[0]), float(row[1]), float(row[4]), float(row[5])
+            polys = np.array(list(map(float, row[:8]))).reshape(4, 2)
+            x1, y1 = polys.min(axis=0)
+            x2, y2 = polys.max(axis=0) 
             if obj_name not in obj_info.keys():
                 obj_info[obj_name] = []
             obj_info[obj_name].append([x1, y1, x2, y2])
